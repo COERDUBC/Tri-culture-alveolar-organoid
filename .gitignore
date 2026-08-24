@@ -1,0 +1,18 @@
+# Mounted team-share volumes — never commit their contents. Raw sequencing input
+# stays there; data/ holds only the small derived files that are meant to ship.
+/Volumes/
+
+# Analysis output: runs/ holds the raw per-run output (figures, tables, RDS
+# cache). Not committed.
+runs/
+
+# R / system
+.Rproj.user/
+.Rhistory
+.RData
+.Ruserdata
+.DS_Store
+.claude/
+
+# Machine-specific configuration: same schema as config.yml, real paths.
+config_local.yml

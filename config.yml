@@ -1,0 +1,228 @@
+# =====================================================================
+# RNA-seq downstream analysis configuration
+# Paths, design choices, thresholds, and external reference files.
+# =====================================================================
+
+project:
+  species: "Homo sapiens"          # used for org.db / msigdbr
+  orgdb: "org.Hs.eg.db"            # Bioconductor annotation package
+
+display_labels:
+  conditions:
+    Control: "Control"
+    TGF: "TGF-β1"
+    Bleo: "Bleomycin"
+
+# ---------------------------------------------------------------------
+# Inputs. Point these at the completed STAR-Salmon output.
+# `salmon_dir` holds <sample>/quant.sf,
+# `tx2gene` is the salmon.merged.tx2gene.tsv, `metadata` is the csv in inputs/.
+# ---------------------------------------------------------------------
+input:
+  salmon_dir: "<ProjectPath>/Studies/FIBRES/20260619_FIBRES_nexflow_output"
+  tx2gene: "<ProjectPath>/Studies/FIBRES/20260619_FIBRES_nexflow_output/salmon.merged.tx2gene.tsv"
+  metadata: "<ProjectPath>/Studies/FIBRES/inputs/metadata.csv"   # sample, condition, batch
+
+# ---------------------------------------------------------------------
+# Experimental design. `condition_column` must be a column in samples.csv.
+# `reference_level` is the baseline the contrasts are built against.
+# batch is included to regress out the batch effect (samples span 2 batches).
+# Covariates other than condition are coerced to factors automatically.
+# ---------------------------------------------------------------------
+design:
+  formula: "~ batch + condition"
+  condition_column: "condition"
+  reference_level: "Control"
+
+# Pairwise comparisons to run (numerator vs denominator).
+# `label_genes` are always labelled on that comparison's volcano plot, whether
+# or not they pass the significance thresholds — use it for genes with an
+# orthogonal readout to check against.
+comparisons:
+  - name: "TGF_vs_Control"
+    label: "TGF-β1 vs Control"
+    numerator: "TGF"
+    denominator: "Control"
+  - name: "Bleo_vs_Control"
+    label: "Bleomycin vs Control"
+    numerator: "Bleo"
+    denominator: "Control"
+    label_genes: ["CXCL8"]   # IL-8: cross-check against the measured protein level
+  - name: "TGF_vs_Bleo"
+    label: "TGF-β1 vs Bleomycin"
+    numerator: "TGF"
+    denominator: "Bleo"
+
+# Targeted bulk-RNA marker view adapted from the qRT-PCR panel in
+# Li et al. 2026 (online 2025; doi:10.1186/s12931-025-03441-0), Figure 1.
+# These remain gene-level bulk expression readouts, not proof of a discrete
+# aberrant-basal population.
+targeted_marker_figure:
+  genes: ["KRT17", "MMP7", "COL1A1", "CDH2", "CDKN1A", "GDF15",
+          "SFTPC", "AGER", "SLC2A1", "HES4"]
+
+# Stage 04 prepares the bulk upload; Stage 05 prepares the GSE136831 reference;
+# Stage 06 imports the web result. The analysis uses the lineage-restricted
+# GSE136831 CIBERSORTx result; LM22 and the full atlas are not used.
+deconvolution:
+  permutations: 1000
+  quantile_normalization: false
+  cibersortx:
+    GSE136831_batch_correction: "S-mode"
+    absolute_mode: true
+    GSE136831_lineage_result: "<ProjectPath>/Studies/FIBRES/CIBERSORTx_output/GSE136831/CIBERSORTx_cap4_Results.csv"
+    # Optional. Sensitivity analysis with a lower donor-cap threshold (cap2) to
+    # assess the impact of a more stringent filtering criterion. This is a
+    # secondary analysis and not used in the main results.
+    GSE136831_lineage_result_sensitivity: "<ProjectPath>/Studies/FIBRES/CIBERSORTx_output/GSE136831/CIBERSORTx_cap2_Results.csv"
+  GSE136831_atlas:
+    # Prespecified lineage-restricted cell types to use in the deconvolution
+    lineage_restricted_cell_types:
+      - "ATI"
+      - "ATII"
+      - "Aberrant_Basaloid"
+      - "Fibroblast"
+      - "Myofibroblast"
+    source:
+      # Four processed GSE136831 files are sufficient; GSE136831_RAW.tar is
+      # not used. Stage 04 reads these files directly and writes the labelled
+      # single-cell reference required by CIBERSORTx.
+      data_dir: "<ProjectPath>/Studies/FIBRES/Kaminski_IPF/HLCA"
+      matrix_file: "GSE136831_RawCounts_Sparse.mtx.gz"
+      gene_file: "GSE136831_AllCells.GeneIDs.txt.gz"
+      barcode_file: "GSE136831_AllCells.cellBarcodes.txt.gz"
+      metadata_file: "GSE136831_AllCells.Samples.CellType.MetadataTable.txt.gz"
+      gene_symbol_column: "HGNC_EnsemblAlt_GeneID"
+      barcode_column: "CellBarcode_Identity"
+      cell_type_column: "Manuscript_Identity"
+      donor_column: "Subject_Identity"
+      condition_column: "Disease_Identity"
+      include_conditions: ["IPF", "Control","COPD"]
+      exclude_cell_types: ["Multiplet"]
+      min_cells_per_cell_type: 3
+      max_cells_per_donor_condition_cell_type: 4
+    # Post hoc aggregation used by the primary broad-compartment comparison.
+    # All five state-level scores are retained separately.
+    comparison_patterns:
+      AT1: "^(ATI|AT1)$"
+      Epithelial: "^(ATII|AT2|Aberrant_Basaloid)$"
+      Fibroblast: "^(Fibroblast|Myofibroblast)$"
+
+thresholds:
+  padj: 0.05
+  lfc: 1          # observed effect-size filter after eBayes (strict |log2FC| > 1)
+  top_n_heatmap: 50
+
+# Ranked MSigDB GSEA collections to compute, save, plot, and display. `id` is
+# the stable filename/table identifier. Supported collections are Hallmark,
+# GO_BP, Reactome, and KEGG; the current implementation supports source=msigdb.
+gsea:
+  top_terms_per_plot: 15
+  gene_sets:
+    - id: "hallmark"
+      source: "msigdb"
+      collection: "Hallmark"
+    - id: "reactome"
+      source: "msigdb"
+      collection: "Reactome"
+
+# Audit whether the strongest strict-DE genes are represented in the eight
+# prespecified hand-curated panels. Uncovered genes are mapped only to the
+# leading edges of significant MSigDB GSEA terms. The Ryu signature is excluded.
+panel_coverage:
+  top_n_de_genes: 50
+  msigdb_padj: 0.05
+
+# Published gene set, tested separately from the hand-curated marker panels.
+# An 18-gene squamous/basal core module (keratins, cornified-envelope, desmosome
+# and gap-junction genes), all 18 drawn from the aberrant-basaloid IPF-severity
+# programme of Ryu et al. 2024. Workbook:
+# https://github.com/ryumh/LTRC_RNAseq_Deconvolution
+# (BMC Genomics Ryu et al 2024 SupplementalTables 20241104.xlsx).
+published_signatures:
+  ryu_2024_module:
+    name: "RYU2024_MODULE_GENESET"
+    genes: ["LY6D", "KRT16", "KRT17", "KRT15", "KRT6B", "KRT6A", "S100A2",
+            "SERPINB5", "FGFBP1", "GJB3", "GJB5", "PKP1", "DSC3", "SPRR1B",
+            "PKP2", "SPRR2D", "LGALS7B", "CALML3"]
+    # On an 18-gene set the usual minimum of 10 would require 56% of the module
+    # to be detected before the test ran at all. 5 still guards against a
+    # degenerate test on a handful of genes.
+    min_size: 5
+    # The module has 18 genes, so the heatmap shows all of them and no
+    # per-contrast selection is applied.
+    heatmap_top_genes_per_contrast: 18
+    doi: "10.1186/s12864-024-11031-5"
+    source_table: "Supplemental Table 3"
+
+reproducibility:
+  random_seed: 20260715
+  # Archived upstream nf-core/rnaseq software versions.
+  gencode_release: "49"
+  genome_build: "GRCh38 primary assembly"
+  nfcore_rnaseq_version: "3.26.0"
+  nextflow_version: "26.04.3"
+  star_version: "2.7.11b"
+  salmon_version: "1.10.3"
+
+# Stage 07 cross-cell ligand-receptor analysis. PRIMARY resource is a curated CSV
+# (CDB2025v1, https://connectomedb.org — a curated multi-species resource).
+# Download the human L-R table, save it somewhere stable, and
+# point lr_csv at it. Stage 07 does not substitute a different live database.
+# Inspect the file's header if auto-detect fails:
+#   Rscript -e 'print(names(readr::read_csv("<file>", n_max=0, show_col_types=FALSE)))'
+crosstalk:
+  # Reuse the balanced five-state Stage 05 reference across analysis runs.
+  # Stage 07/08 read this TSV and rebuild run-local profile objects/tables.
+  GSE136831_reference_file: "<ProjectPath>/Studies/FIBRES/CIBERSORTx_output/GSE136831/GSE136831_reference_donor_cap4.tsv"
+  GSE136831_min_cpm: 1
+  GSE136831_min_detection_fraction: 0.10
+  lr_csv: "<ProjectPath>/Studies/FIBRES/inputs/ConnectomeDB2025_human.csv"  # connectomeDB2025 human L-R CSV (PRIMARY resource)
+  lr_ligand_col: "Ligand Symbols"
+  lr_receptor_col: "Receptor Symbols"
+  lr_min_cpm: 1       # a gene counts as "expressed" at >= this CPM in >= half the samples
+
+# Stage 08 NicheNet ligand-activity prioritization (OPTIONAL, complements the
+# connectomeDB2025 candidates). Requires the nichenetr package (GitHub:
+# saeyslab/nichenetr) plus its prior-model RDS files. Like the L-R CSV, these are
+# downloaded ONCE from the nichenetr Zenodo record and pinned here (no live
+# download). Filenames differ between model versions (v1/v2) — pin whatever you
+# downloaded; the model_provenance.csv records their md5. Leave the files blank
+# or as TO_FILL to skip NicheNet.
+# how to use nichenet: https://ngs101.com/how-to-analyze-single-cell-rna-seq-data-complete-beginners-guide-part-10-cell-cell-communication-analysis-using-nichenet/#Downloading_the_NicheNet_Prior_Model_Files
+nichenet:
+  # Required by the current ligand-activity/target workflow. Download a matched
+  # human prior-model release once; do not substitute connectomeDB2025 here.
+  ligand_target_matrix: "<ProjectPath>/Studies/FIBRES/NicheNet_v2/ligand_target_matrix_nsga2r_final.rds"   # .../ligand_target_matrix_nsga2r_final.rds
+  lr_network: "<ProjectPath>/Studies/FIBRES/NicheNet_v2/lr_network_human_21122021.rds"             # .../lr_network_human_21122021.rds
+  # weighted_networks_nsga2r_final.rds is not required unless signaling-path
+  # reconstruction is added later.
+  top_n_ligands: 20                 # top ligands kept for target / active-L-R extraction
+  top_n_chord_pairs: 40             # original chord display: highest reference-score active L-R pairs
+
+output:
+  # Stage 01 creates runs/run_YYYY-MM-DD_HH-MM-SS and records it in
+  # runs/CURRENT_RUN; every later stage writes into that same folder.
+  results_dir: "runs"
+  # Every figure remains a transparent SVG. Only the manuscript panels listed
+  # here also receive a direct, transparent 600-DPI PNG for BioRender.
+  manuscript_png:
+    enabled: true
+    dpi: 600
+    subdir: "biorender_png"
+    files:
+      - "pca.svg"
+      - "sample_distances.svg"
+      - "volcano_TGF_vs_Control.svg"
+      - "volcano_Bleo_vs_Control.svg"
+      - "heatmap_TGF_vs_Control.svg"
+      - "heatmap_Bleo_vs_Control.svg"
+      - "targeted_aberrant_basal_marker_expression.svg"
+      - "gsea_hallmark_dotplot_TGF_vs_Control.svg"
+      - "gsea_hallmark_dotplot_Bleo_vs_Control.svg"
+      - "deconvolution_GSE136831_states.svg"
+      - "deconvolution_GSE136831_states_boxplot.svg"
+      - "lr_treatment_associated.svg"
+      - "nichenet_lr_chord_TGF_vs_Control.svg"
+      - "nichenet_lr_chord_Bleo_vs_Control.svg"
+      - "gsea_ryu2024_programme_and_leading_edge.svg"

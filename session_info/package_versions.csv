@@ -1,0 +1,8 @@
+package,version
+tximport,1.38.2
+edgeR,4.8.2
+limma,3.66.0
+fgsea,1.36.2
+msigdbr,26.1.0
+circlize,0.4.18
+nichenetr,2.2.1.1
